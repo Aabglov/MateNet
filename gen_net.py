@@ -28,14 +28,10 @@ layer_1_dim = 128
 layer_2_dim = 64
 output_dim = 10
 input_dim = 784
-num_layers = 3
+num_layers = 1
 
-weight_shape_1 = (input_dim,layer_1_dim)
-bias_shape_1 = (layer_1_dim)
-weight_shape_2 = (layer_1_dim,layer_2_dim)
-bias_shape_2 = (layer_2_dim)
-weight_shape_3 = (layer_2_dim,output_dim)
-bias_shape_3 = (output_dim)
+weight_shape_1 = (input_dim,output_dim)
+bias_shape_1 = (output_dim)
 
 from tensorflow.examples.tutorials.mnist import input_data
 mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
@@ -60,13 +56,8 @@ class Individual:
         self.generation = 0
 
 def createNewIndividual():
-    weights = [generateWeights(weight_shape_1),
-               generateWeights(weight_shape_2),
-               generateWeights(weight_shape_3)]
-
-    biases = [generateBiases(bias_shape_1),
-              generateBiases(bias_shape_2),
-              generateBiases(bias_shape_3)]
+    weights = [generateWeights(weight_shape_1)]
+    biases = [generateBiases(bias_shape_1)]
 
     return Individual(weights,biases)
 
@@ -76,7 +67,7 @@ for c in range(num_children):
     colony.append(createNewIndividual())
 
 
-def mutate(mat,mutation_factor=0.1):
+def mutate(mat,mutation_factor=0.01):
     return mat + np.random.normal(size=mat.shape,scale=mutation_factor)
 
 # For now mating only involves 2 individuals,
@@ -87,7 +78,7 @@ def mutate(mat,mutation_factor=0.1):
 def Mate(indiv1,indiv2,mutation_factor=0.1):
     weights = []
     biases = []
-    for i in range(num_layers):
+    for i in range(len(indiv1.weights)):
         avg_weights = (indiv1.weights[i] + indiv2.weights[i]) / 2.0
         avg_biases = (indiv1.biases[i] + indiv2.biases[i]) / 2.0
         weights.append(avg_weights)
@@ -152,34 +143,19 @@ with graph.as_default():
     with tf.name_scope("input"):
         x_input = tf.placeholder(shape=[None, input_dim], dtype=tf.float32, name='x_input')
         y_input = tf.placeholder(shape=[None, output_dim],dtype=tf.float32, name='y_input')
-        # For now we're assuming a 3-layer network.
-        # In the future I'll change this to be dynamic as well.
         #   Layer 1
-        weights_1_input = tf.placeholder(shape=[input_dim,layer_1_dim], dtype=tf.float32, name='weights_1')
-        biases_1_input = tf.placeholder(shape=[layer_1_dim], dtype=tf.float32, name='biases_1')
-        # Layer 2
-        weights_2_input = tf.placeholder(shape=[layer_1_dim,layer_2_dim], dtype=tf.float32, name='weights_2')
-        biases_2_input = tf.placeholder(shape=[layer_2_dim], dtype=tf.float32, name='biases_2')
-        # Layer 3
-        weights_3_input = tf.placeholder(shape=[layer_2_dim,output_dim], dtype=tf.float32, name='weights_3')
-        biases_3_input = tf.placeholder(shape=[output_dim], dtype=tf.float32, name='biases_3')
+        weights_input = tf.placeholder(shape=[input_dim,output_dim], dtype=tf.float32, name='weights_1')
+        biases_input = tf.placeholder(shape=[output_dim], dtype=tf.float32, name='biases_1')
 
     # Model
     with tf.name_scope("model"):
-        layer_1_out = GenLayer(x_input,     weights_1_input, biases_1_input, "layer_1", act=tf.sigmoid, summarize=True)
-        layer_2_out = GenLayer(layer_1_out, weights_2_input, biases_2_input, "layer_2", act=tf.sigmoid, summarize=True)
-        layer_3_out = GenLayer(layer_2_out, weights_3_input, biases_3_input, "layer_3", activate=False, act=tf.sigmoid, summarize=True)
+        layer_out = GenLayer(x_input, weights_input, biases_input, "layer_1", activate=False, act=tf.sigmoid, summarize=True)
 
     # Loss
     with tf.name_scope("loss"):
         #loss = tf.losses.mean_squared_error(y_input,layer_3_out)
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_3_out))
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_out))
         tf.summary.scalar('loss', loss)
-
-    # Backward Propagation
-    # with tf.name_scope('train'):
-    #     collection = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-    #     train_step = tf.train.AdamOptimizer(LEARNING_RATE,beta1=ADAM_BETA).minimize(loss,var_list=collection)
 
     # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
     merged = tf.summary.merge_all()
@@ -220,12 +196,8 @@ with tf.Session(graph=graph) as sess:
                 # Run optimization op (backprop) and cost op (to get loss value)
                 input_dict = {x_input:batch[0],
                              y_input:batch[1],
-                             weights_1_input:individual.weights[0],
-                             biases_1_input:individual.biases[0],
-                             weights_2_input:individual.weights[1],
-                             biases_2_input:individual.biases[1],
-                             weights_3_input:individual.weights[2],
-                             biases_3_input:individual.biases[2]
+                             weights_input:individual.weights[0],
+                             biases_input:individual.biases[0]
                 }
 
                 summary,cost = sess.run([merged,loss], feed_dict=input_dict)
