@@ -18,13 +18,16 @@ model_path = os.path.join(dir_path,SAVE_DIR,CHECKPOINT_NAME)
 num_examples = 10000
 NUM_EPOCHS = 10000
 LOG_EPOCH = 100
-batch_size = 10000
+batch_size = 1000
 batches_per_epoch = int(num_examples / batch_size)
 
+# Initialize members of the herd
+num_children = 20
+num_sub_optimal = int(num_children / 10.0)
 layer_1_dim = 128
 layer_2_dim = 64
-output_dim = 12
-input_dim = int(2 * output_dim)
+output_dim = 10
+input_dim = 784
 num_layers = 3
 
 weight_shape_1 = (input_dim,layer_1_dim)
@@ -34,37 +37,18 @@ bias_shape_2 = (layer_2_dim)
 weight_shape_3 = (layer_2_dim,output_dim)
 bias_shape_3 = (output_dim)
 
-def generate_dataset(output_dim = 8,num_examples=1000):
-    def int2vec(x,dim=output_dim):
-        out = np.zeros(dim)
-        binrep = np.array(list(np.binary_repr(x))).astype('int')
-        out[-len(binrep):] = binrep
-        return out
-
-    x_left_int = (np.random.rand(num_examples) * 2**(output_dim - 1)).astype('int')
-    x_right_int = (np.random.rand(num_examples) * 2**(output_dim - 1)).astype('int')
-    y_int = x_left_int + x_right_int
-
-    x = list()
-    for i in range(len(x_left_int)):
-        x.append(np.concatenate((int2vec(x_left_int[i]),int2vec(x_right_int[i]))))
-
-    y = list()
-    for i in range(len(y_int)):
-        y.append(int2vec(y_int[i]))
-
-    x = np.array(x,dtype="float32")
-    y = np.array(y,dtype="float32")
-
-    return (x,y)
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
 def generateWeights(shape):
     return np.random.normal(size=shape,scale=0.1)
+    #return np.random.randn(*shape)
 
 # For now this function is the same as generateWeights,
 # but I may want to change that in the future
 def generateBiases(shape):
     return np.random.normal(size=shape,scale=0.1)
+    #return np.random.randn(shape)
 
 class Individual:
     # Expecting list of weight matrices
@@ -86,14 +70,13 @@ def createNewIndividual():
 
     return Individual(weights,biases)
 
-# Initialize members of the herd
-num_children = 10
+
 colony = []
 for c in range(num_children):
     colony.append(createNewIndividual())
 
 
-def mutate(mat,mutation_factor=0.003):
+def mutate(mat,mutation_factor=0.1):
     return mat + np.random.normal(size=mat.shape,scale=mutation_factor)
 
 # For now mating only involves 2 individuals,
@@ -101,7 +84,7 @@ def mutate(mat,mutation_factor=0.003):
 # a "kink" variable that allows more than 1 partner.
 #....
 # Oh my
-def Mate(indiv1,indiv2):
+def Mate(indiv1,indiv2,mutation_factor=0.1):
     weights = []
     biases = []
     for i in range(num_layers):
@@ -110,12 +93,14 @@ def Mate(indiv1,indiv2):
         weights.append(avg_weights)
         biases.append(avg_biases)
     new_colony = []
-    for i in range(num_children):
-        mutated_weights = [mutate(w) for w in weights]
-        mutated_biases = [mutate(b) for b in biases]
+    for i in range(num_children-num_sub_optimal):
+        mutated_weights = [mutate(w,mutation_factor) for w in weights]
+        mutated_biases = [mutate(b,mutation_factor) for b in biases]
         new_indiv = Individual(mutated_weights,mutated_biases)
         new_indiv.generation += 1
         new_colony.append(new_indiv)
+    for _ in range(num_sub_optimal):
+        new_colony.append(createNewIndividual())
     return new_colony
 
 
@@ -152,13 +137,16 @@ with graph.as_default():
         return tf.Variable(initial)
 
 
-    def GenLayer(input_tensor, weights, biases, layer_name, act=tf.sigmoid, summarize=False):
+    def GenLayer(input_tensor, weights, biases, layer_name, activate=True, act=tf.sigmoid, summarize=False):
         with tf.name_scope(layer_name):
             pre_activations = tf.matmul(input_tensor, weights) + biases
-            activations = act(pre_activations)
-            if summarize:
-                tf.summary.histogram('activations', activations)
-        return activations
+            if activate:
+                activations = act(pre_activations)
+                if summarize:
+                    tf.summary.histogram('activations', activations)
+                return activations
+            else:
+                return pre_activations
 
     # Placeholders
     with tf.name_scope("input"):
@@ -180,11 +168,12 @@ with graph.as_default():
     with tf.name_scope("model"):
         layer_1_out = GenLayer(x_input,     weights_1_input, biases_1_input, "layer_1", act=tf.sigmoid, summarize=True)
         layer_2_out = GenLayer(layer_1_out, weights_2_input, biases_2_input, "layer_2", act=tf.sigmoid, summarize=True)
-        layer_3_out = GenLayer(layer_2_out, weights_3_input, biases_3_input, "layer_3", act=tf.sigmoid, summarize=True)
+        layer_3_out = GenLayer(layer_2_out, weights_3_input, biases_3_input, "layer_3", activate=False, act=tf.sigmoid, summarize=True)
 
     # Loss
     with tf.name_scope("loss"):
-        loss = tf.losses.mean_squared_error(y_input,layer_3_out)
+        #loss = tf.losses.mean_squared_error(y_input,layer_3_out)
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_3_out))
         tf.summary.scalar('loss', loss)
 
     # Backward Propagation
@@ -205,8 +194,6 @@ with graph.as_default():
 
 
 print("Beginning Session")
-x,y = generate_dataset(num_examples=num_examples, output_dim = output_dim)
-
 
 #Running first session
 with tf.Session(graph=graph) as sess:
@@ -225,15 +212,14 @@ with tf.Session(graph=graph) as sess:
     already_trained = 0
     for epoch in range(already_trained,NUM_EPOCHS):
         for batch_i in range(batches_per_epoch):
-            batch_x = x[(batch_i * batch_size):(batch_i+1)*batch_size]
-            batch_y = y[(batch_i * batch_size):(batch_i+1)*batch_size]
+            batch = mnist.train.next_batch(batch_size)
 
             start = time.time()
             avg_cost = 0
             for individual in colony:
                 # Run optimization op (backprop) and cost op (to get loss value)
-                input_dict = {x_input:batch_x,
-                             y_input:batch_y,
+                input_dict = {x_input:batch[0],
+                             y_input:batch[1],
                              weights_1_input:individual.weights[0],
                              biases_1_input:individual.biases[0],
                              weights_2_input:individual.weights[1],
@@ -248,14 +234,15 @@ with tf.Session(graph=graph) as sess:
 
             end = time.time()
             train_writer.add_summary(summary, epoch)
-            print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost/num_children), "time:", "{}".format(end-start))
+            avg_cost /= num_children
+            print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost), "time:", "{}".format(end-start))
 
             # Determine the 2 best-performing individuals
             # and mate them to create next generation
             colony_sorted_by_cost = sorted(colony, key=lambda x: x.loss, reverse=False)
             best_1 = colony_sorted_by_cost[0]
             best_2 = colony_sorted_by_cost[1]
-            colony = Mate(best_1,best_2)
+            colony = Mate(best_1,best_2,avg_cost/30.)
 
         # # Display logs per epoch step
         # if epoch % LOG_EPOCH == 0:
