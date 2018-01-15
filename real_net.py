@@ -18,7 +18,7 @@ model_path = os.path.join(dir_path,SAVE_DIR,CHECKPOINT_NAME)
 num_examples = 10000
 NUM_EPOCHS = 10000
 LOG_EPOCH = 100
-batch_size = 1000
+batch_size = 100#0
 batches_per_epoch = int(num_examples / batch_size)
 
 # Initialize members of the herd
@@ -26,8 +26,8 @@ layer_1_dim = 64#128
 layer_2_dim = 32#64
 output_dim = 12
 input_dim = int(2 * output_dim)
-num_layers = 3
-LEARNING_RATE = 0.003
+num_layers = 1#3
+LEARNING_RATE = 0.001
 ADAM_BETA = 0.5
 
 
@@ -98,19 +98,21 @@ with graph.as_default():
 
     # Model
     with tf.name_scope("model"):
-        layer_1 = GenLayer(input_dim,   layer_1_dim, name="layer_1", act=tf.sigmoid, summarize=True)
-        layer_2 = GenLayer(layer_1_dim, layer_2_dim, name="layer_2", act=tf.sigmoid, summarize=True)
-        layer_3 = GenLayer(layer_2_dim, output_dim,  name="layer_3", act=tf.sigmoid, summarize=True)
+        #layer_1 = GenLayer(input_dim,   layer_1_dim, name="layer_1", act=tf.sigmoid, summarize=True)
+        #layer_2 = GenLayer(layer_1_dim, layer_2_dim, name="layer_2", act=tf.sigmoid, summarize=True)
+        #layer_3 = GenLayer(layer_2_dim, output_dim,  name="layer_3", act=tf.sigmoid, summarize=True)
+        layer_1 = GenLayer(input_dim, output_dim, name="layer_1", act=tf.sigmoid, summarize=True)
 
     with tf.name_scope("forward"):
-        layer_1_out = layer_1.forward(x_input)
-        layer_2_out = layer_2.forward(layer_1_out)
-        layer_3_out = layer_3.forward(layer_2_out,activate=False)
+        #layer_1_out = layer_1.forward(x_input)
+        #layer_2_out = layer_2.forward(layer_1_out)
+        #layer_3_out = layer_3.forward(layer_2_out,activate=False)
+        layer_out = layer_1.forward(x_input,activate=False)
 
     # Loss
     with tf.name_scope("loss"):
         #loss = tf.losses.mean_squared_error(y_input,layer_3_out)
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_3_out))
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_out))
         tf.summary.scalar('loss', loss)
 
     # Backward Propagation
@@ -148,6 +150,7 @@ with tf.Session(graph=graph) as sess:
     # Training cycle
     already_trained = 0
     for epoch in range(already_trained,NUM_EPOCHS):
+        avg_cost = 0
         for batch_i in range(batches_per_epoch):
             batch = mnist.train.next_batch(batch_size)
 
@@ -161,7 +164,8 @@ with tf.Session(graph=graph) as sess:
 
             end = time.time()
             train_writer.add_summary(summary, epoch)
-            print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(cost), "time:", "{}".format(end-start))
+            avg_cost += cost
+        print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost/batches_per_epoch), "time:", "{}".format(end-start))
 
 
         # # Display logs per epoch step

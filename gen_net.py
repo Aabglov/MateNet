@@ -18,8 +18,9 @@ model_path = os.path.join(dir_path,SAVE_DIR,CHECKPOINT_NAME)
 num_examples = 10000
 NUM_EPOCHS = 10000
 LOG_EPOCH = 100
-batch_size = 1000
+batch_size = 100
 batches_per_epoch = int(num_examples / batch_size)
+LEARNING_RATE = 0.003
 
 # Initialize members of the herd
 num_children = 20
@@ -187,11 +188,12 @@ with tf.Session(graph=graph) as sess:
     # Training cycle
     already_trained = 0
     for epoch in range(already_trained,NUM_EPOCHS):
+        avg_cost = 0
         for batch_i in range(batches_per_epoch):
             batch = mnist.train.next_batch(batch_size)
 
             start = time.time()
-            avg_cost = 0
+            avg_batch_cost = 0
             for individual in colony:
                 # Run optimization op (backprop) and cost op (to get loss value)
                 input_dict = {x_input:batch[0],
@@ -203,18 +205,20 @@ with tf.Session(graph=graph) as sess:
                 summary,cost = sess.run([merged,loss], feed_dict=input_dict)
                 individual.loss = cost
                 avg_cost += cost
+                avg_batch_cost += cost
 
+            avg_batch_cost /= num_children
             end = time.time()
             train_writer.add_summary(summary, epoch)
-            avg_cost /= num_children
-            print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost), "time:", "{}".format(end-start))
 
             # Determine the 2 best-performing individuals
             # and mate them to create next generation
             colony_sorted_by_cost = sorted(colony, key=lambda x: x.loss, reverse=False)
             best_1 = colony_sorted_by_cost[0]
             best_2 = colony_sorted_by_cost[1]
-            colony = Mate(best_1,best_2,avg_cost/30.)
+            colony = Mate(best_1,best_2,avg_batch_cost * LEARNING_RATE)#/30.)
+        avg_cost /= (num_children * batch_size)
+        print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost), "time:", "{}".format(end-start))
 
         # # Display logs per epoch step
         # if epoch % LOG_EPOCH == 0:
