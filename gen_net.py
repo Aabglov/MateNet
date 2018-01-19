@@ -20,10 +20,10 @@ NUM_EPOCHS = 10000
 LOG_EPOCH = 100
 batch_size = 100
 batches_per_epoch = int(num_examples / batch_size)
-LEARNING_RATE = 0.003
+LEARNING_RATE = 0.01
 
 # Initialize members of the herd
-num_children = 20
+num_children = 100#20
 num_sub_optimal = int(num_children / 10.0)
 layer_1_dim = 128
 layer_2_dim = 64
@@ -71,12 +71,14 @@ for c in range(num_children):
 def mutate(mat,mutation_factor=0.01):
     return mat + np.random.normal(size=mat.shape,scale=mutation_factor)
 
+
+
 # For now mating only involves 2 individuals,
 # but if the results are promising I may include
 # a "kink" variable that allows more than 1 partner.
 #....
 # Oh my
-def Mate(indiv1,indiv2,mutation_factor=0.1):
+def Mate(indiv1,indiv2,mutation_factor=0.01):
     weights = []
     biases = []
     for i in range(len(indiv1.weights)):
@@ -95,6 +97,23 @@ def Mate(indiv1,indiv2,mutation_factor=0.1):
         new_colony.append(createNewIndividual())
     return new_colony
 
+# This method simulates asexual reproduction
+# with mutation
+def MonoReproduce(indiv,mutation_factor=0.01):
+    weights = []
+    biases = []
+    for i in range(len(indiv.weights)):
+        avg_weights = indiv.weights[i]
+        avg_biases = indiv.biases[i]
+        weights.append(avg_weights)
+        biases.append(avg_biases)
+
+    mutated_weights = [mutate(w,mutation_factor) for w in weights]
+    mutated_biases = [mutate(b,mutation_factor) for b in biases]
+    new_indiv = Individual(mutated_weights,mutated_biases)
+    new_indiv.generation += 1
+
+    return new_indiv
 
 def variable_summaries(var):
     """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
@@ -194,6 +213,7 @@ with tf.Session(graph=graph) as sess:
 
             start = time.time()
             avg_batch_cost = 0
+            cost_list = []
             for individual in colony:
                 # Run optimization op (backprop) and cost op (to get loss value)
                 input_dict = {x_input:batch[0],
@@ -204,20 +224,36 @@ with tf.Session(graph=graph) as sess:
 
                 summary,cost = sess.run([merged,loss], feed_dict=input_dict)
                 individual.loss = cost
+                cost_list.append(cost)
                 avg_cost += cost
                 avg_batch_cost += cost
 
             avg_batch_cost /= num_children
+
+            inverse_cost_list = [1./c for c in cost_list]
+            inverse_cost_total = sum(inverse_cost_list)
+            inverse_cost_list /= inverse_cost_total
+            num_costs = len(inverse_cost_list)
+            #print(inverse_cost_list)
+            indivs_to_repro = np.random.choice(num_costs, num_costs, p=inverse_cost_list)
+            #print(vals)
+            new_colony = []
+            for i in indivs_to_repro:
+                indiv = colony[i]
+                new_colony.append(MonoReproduce(indiv,LEARNING_RATE))
+            colony = new_colony
+
+
             end = time.time()
             train_writer.add_summary(summary, epoch)
 
-            # Determine the 2 best-performing individuals
-            # and mate them to create next generation
-            colony_sorted_by_cost = sorted(colony, key=lambda x: x.loss, reverse=False)
-            best_1 = colony_sorted_by_cost[0]
-            best_2 = colony_sorted_by_cost[1]
-            colony = Mate(best_1,best_2,avg_batch_cost * LEARNING_RATE)#/30.)
-        avg_cost /= (num_children * batch_size)
+            # # Determine the 2 best-performing individuals
+            # # and mate them to create next generation
+            # colony_sorted_by_cost = sorted(colony, key=lambda x: x.loss, reverse=False)
+            # best_1 = colony_sorted_by_cost[0]
+            # best_2 = colony_sorted_by_cost[1]
+            # colony = Mate(best_1,best_2,LEARNING_RATE)#/30.)
+        avg_cost /= (num_children * batches_per_epoch)
         print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost), "time:", "{}".format(end-start))
 
         # # Display logs per epoch step
