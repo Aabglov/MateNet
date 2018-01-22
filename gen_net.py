@@ -18,7 +18,7 @@ model_path = os.path.join(dir_path,SAVE_DIR,CHECKPOINT_NAME)
 num_examples = 10000
 NUM_EPOCHS = 10000
 LOG_EPOCH = 100
-batch_size = 100
+batch_size = 1000
 batches_per_epoch = int(num_examples / batch_size)
 LEARNING_RATE = 0.01
 
@@ -100,16 +100,8 @@ def Mate(indiv1,indiv2,mutation_factor=0.01):
 # This method simulates asexual reproduction
 # with mutation
 def MonoReproduce(indiv,mutation_factor=0.01):
-    weights = []
-    biases = []
-    for i in range(len(indiv.weights)):
-        avg_weights = indiv.weights[i]
-        avg_biases = indiv.biases[i]
-        weights.append(avg_weights)
-        biases.append(avg_biases)
-
-    mutated_weights = [mutate(w,mutation_factor) for w in weights]
-    mutated_biases = [mutate(b,mutation_factor) for b in biases]
+    mutated_weights = [mutate(w,mutation_factor) for w in indiv.weights]
+    mutated_biases = [mutate(b,mutation_factor) for b in indiv.biases]
     new_indiv = Individual(mutated_weights,mutated_biases)
     new_indiv.generation += 1
 
@@ -148,34 +140,60 @@ with graph.as_default():
         return tf.Variable(initial)
 
 
-    def GenLayer(input_tensor, weights, biases, layer_name, activate=True, act=tf.sigmoid, summarize=False):
-        with tf.name_scope(layer_name):
-            pre_activations = tf.matmul(input_tensor, weights) + biases
-            if activate:
-                activations = act(pre_activations)
-                if summarize:
-                    tf.summary.histogram('activations', activations)
-                return activations
-            else:
-                return pre_activations
+    class GenLayer:
+        def __init__(self, in_dim, out_dim, name, act=tf.sigmoid, summarize=False):
+            self.name = name
+            self.act = act
+            self.summarize = summarize
+            self.weights = init_weight([in_dim,out_dim])
+            self.biases = init_bias([out_dim])
+
+        def forward(self,input_tensor,activate=True):
+            with tf.name_scope(self.name):
+                pre_activations = tf.matmul(input_tensor, self.weights) + self.biases
+                if activate:
+                    activations = self.act(pre_activations)
+                    if self.summarize:
+                        tf.summary.histogram('activations', activations)
+                    return activations
+                else:
+                    return pre_activations
 
     # Placeholders
     with tf.name_scope("input"):
-        x_input = tf.placeholder(shape=[None, input_dim], dtype=tf.float32, name='x_input')
-        y_input = tf.placeholder(shape=[None, output_dim],dtype=tf.float32, name='y_input')
-        #   Layer 1
-        weights_input = tf.placeholder(shape=[input_dim,output_dim], dtype=tf.float32, name='weights_1')
-        biases_input = tf.placeholder(shape=[output_dim], dtype=tf.float32, name='biases_1')
+        x_input = tf.placeholder(tf.float32, shape=[None, input_dim])
+        y_input = tf.placeholder(tf.float32, shape=[None, output_dim])
 
     # Model
     with tf.name_scope("model"):
-        layer_out = GenLayer(x_input, weights_input, biases_input, "layer_1", activate=False, act=tf.sigmoid, summarize=True)
+        models = []
+        for i in range(num_children):
+            models.append(GenLayer(input_dim, output_dim, name="model_{}".format(i), act=tf.sigmoid, summarize=True))
+
+    with tf.name_scope("forward"):
+        outputs = []
+        for i in range(num_children):
+            outputs.append(models[i].forward(x_input,activate=False))
 
     # Loss
     with tf.name_scope("loss"):
-        #loss = tf.losses.mean_squared_error(y_input,layer_3_out)
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=layer_out))
-        tf.summary.scalar('loss', loss)
+        losses = []
+        #loss = 0.
+        for i in range(num_children):
+            l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_input, logits=outputs[i]))
+            losses.append(l)
+            #loss += l
+        #loss /= num_children
+        #tf.summary.scalar('loss', loss)
+
+    # Training
+    with tf.name_scope("reproduce"):
+        inverse_cost_list = [1./l for l in losses]
+        inverse_cost_total = tf.reduce_sum(inverse_cost_list)
+        inverse_cost_list /= inverse_cost_total
+        num_costs = len(inverse_cost_list)
+        #print(inverse_cost_list)
+        indivs_to_repro = np.random.choice(num_costs, num_costs, p=inverse_cost_list)
 
     # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
     merged = tf.summary.merge_all()
@@ -208,44 +226,46 @@ with tf.Session(graph=graph) as sess:
     already_trained = 0
     for epoch in range(already_trained,NUM_EPOCHS):
         avg_cost = 0
+
+        start = time.time()
         for batch_i in range(batches_per_epoch):
             batch = mnist.train.next_batch(batch_size)
 
-            start = time.time()
             avg_batch_cost = 0
             cost_list = []
-            for individual in colony:
-                # Run optimization op (backprop) and cost op (to get loss value)
-                input_dict = {x_input:batch[0],
-                             y_input:batch[1],
-                             weights_input:individual.weights[0],
-                             biases_input:individual.biases[0]
-                }
 
-                summary,cost = sess.run([merged,loss], feed_dict=input_dict)
-                individual.loss = cost
-                cost_list.append(cost)
-                avg_cost += cost
-                avg_batch_cost += cost
+            input_dict = {x_input:batch[0],
+                         y_input:batch[1]
+            }
 
-            avg_batch_cost /= num_children
+            costs = sess.run([losses], feed_dict=input_dict)
 
-            inverse_cost_list = [1./c for c in cost_list]
-            inverse_cost_total = sum(inverse_cost_list)
-            inverse_cost_list /= inverse_cost_total
-            num_costs = len(inverse_cost_list)
-            #print(inverse_cost_list)
-            indivs_to_repro = np.random.choice(num_costs, num_costs, p=inverse_cost_list)
-            #print(vals)
-            new_colony = []
-            for i in indivs_to_repro:
-                indiv = colony[i]
-                new_colony.append(MonoReproduce(indiv,LEARNING_RATE))
-            colony = new_colony
-
-
-            end = time.time()
-            train_writer.add_summary(summary, epoch)
+            # for individual in colony:
+            #     # Run optimization op (backprop) and cost op (to get loss value)
+            #     input_dict = {x_input:batch[0],
+            #                  y_input:batch[1]
+            #     }
+            #
+            #     summary,cost = sess.run([merged,loss], feed_dict=input_dict)
+            #     individual.loss = cost
+            #     cost_list.append(cost)
+            #     avg_cost += cost
+            #     avg_batch_cost += cost
+            #
+            # avg_batch_cost /= num_children
+            #
+            # inverse_cost_list = [1./c for c in cost_list]
+            # inverse_cost_total = sum(inverse_cost_list)
+            # inverse_cost_list /= inverse_cost_total
+            # num_costs = len(inverse_cost_list)
+            # #print(inverse_cost_list)
+            # indivs_to_repro = np.random.choice(num_costs, num_costs, p=inverse_cost_list)
+            # #print(vals)
+            # new_colony = []
+            # for i in indivs_to_repro:
+            #     indiv = colony[i]
+            #     new_colony.append(MonoReproduce(indiv,LEARNING_RATE))
+            # colony = new_colony
 
             # # Determine the 2 best-performing individuals
             # # and mate them to create next generation
@@ -253,7 +273,8 @@ with tf.Session(graph=graph) as sess:
             # best_1 = colony_sorted_by_cost[0]
             # best_2 = colony_sorted_by_cost[1]
             # colony = Mate(best_1,best_2,LEARNING_RATE)#/30.)
-        avg_cost /= (num_children * batches_per_epoch)
+        avg_cost = np.mean(costs)
+        end = time.time()
         print("Epoch:", '{}'.format(epoch), "cost=" , "{}".format(avg_cost), "time:", "{}".format(end-start))
 
         # # Display logs per epoch step

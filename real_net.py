@@ -18,7 +18,7 @@ model_path = os.path.join(dir_path,SAVE_DIR,CHECKPOINT_NAME)
 num_examples = 10000
 NUM_EPOCHS = 10000
 LOG_EPOCH = 100
-batch_size = 100
+batch_size = 1000
 batches_per_epoch = int(num_examples / batch_size)
 
 # Initialize members of the herd
