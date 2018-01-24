@@ -139,11 +139,18 @@ with graph.as_default():
         # return  tf.get_variable(shape=shape, initializer=tf.constant_initializer(0.1))
         return tf.Variable(initial)
 
+    # Mutate/"Learn"
+    def mutateModel(model,mutation_factor=0.1):
+        model.weights += np.random.normal(size=model.weights.shape,scale=mutation_factor)
+        model.biases  += np.random.normal(size=model.biases.shape, scale=mutation_factor)
+        return model
 
     class GenLayer:
         def __init__(self, in_dim, out_dim, name, act=tf.sigmoid, summarize=False):
             self.name = name
             self.act = act
+            self.in_dim = in_dim
+            self.out_dim = out_dim
             self.summarize = summarize
             self.weights = init_weight([in_dim,out_dim])
             self.biases = init_bias([out_dim])
@@ -163,6 +170,7 @@ with graph.as_default():
     with tf.name_scope("input"):
         x_input = tf.placeholder(tf.float32, shape=[None, input_dim])
         y_input = tf.placeholder(tf.float32, shape=[None, output_dim])
+        to_repro_list = tf.placeholder(tf.int32, shape=[num_children])
 
     # Model
     with tf.name_scope("model"):
@@ -188,12 +196,16 @@ with graph.as_default():
 
     # Training
     with tf.name_scope("reproduce"):
-        inverse_cost_list = [1./l for l in losses]
-        inverse_cost_total = tf.reduce_sum(inverse_cost_list)
-        inverse_cost_list /= inverse_cost_total
-        num_costs = len(inverse_cost_list)
-        #print(inverse_cost_list)
-        indivs_to_repro = np.random.choice(num_costs, num_costs, p=inverse_cost_list)
+        new_models = []
+        with tf.Session() as sess:
+            for i in range(num_children):
+                index = tf.cast(to_repro_list[i],np.int32)
+                new_models.append(mutateModel(models[index.eval()]))
+        models = new_models
+        # This value isn't used, it's
+        # just here to force the iteration
+        # to go through this step
+        repro_trigger = tf.reduce_sum(models[0].weights)
 
     # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
     merged = tf.summary.merge_all()
@@ -233,12 +245,14 @@ with tf.Session(graph=graph) as sess:
 
             avg_batch_cost = 0
             cost_list = []
+            repro_list = np.array([i for i in range(num_children)])
 
             input_dict = {x_input:batch[0],
-                         y_input:batch[1]
+                         y_input:batch[1],
+                         to_repro_list:repro_list
             }
 
-            costs = sess.run([losses], feed_dict=input_dict)
+            costs,_ = sess.run([losses,repro_trigger], feed_dict=input_dict)
 
             # for individual in colony:
             #     # Run optimization op (backprop) and cost op (to get loss value)
